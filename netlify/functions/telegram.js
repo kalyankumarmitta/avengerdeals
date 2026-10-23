@@ -71,23 +71,6 @@ function tagAmazonUrl(url, tag) {
 
 // ── Post HTML template ─────────────────────────────────────────────────────────
 
-function navLinks(activeCategory) {
-  const pages = [
-    { label: 'Home',    href: '/',        key: null },
-    { label: 'Kitchen', href: '/kitchen', key: 'kitchen' },
-    { label: 'Home',    href: '/home',    key: 'home' },
-    { label: 'Tools',   href: '/tools',   key: 'tools' },
-    { label: 'About',   href: '/about',   key: null },
-    { label: 'Contact', href: '/contact', key: null },
-  ];
-  return pages
-    .map(p => {
-      const current = p.key === activeCategory ? ' aria-current="page"' : '';
-      return `      <a href="${p.href}"${current}>${p.label}</a>`;
-    })
-    .join('\n');
-}
-
 function formatDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', {
     year: 'numeric', month: 'long', day: 'numeric',
@@ -136,7 +119,7 @@ function postHtml(deal, channelUrl) {
   <div class="container">
     <a href="/" class="site-name">KDLS Deals</a>
     <nav class="site-nav" aria-label="Main">
-${navLinks(deal.category)}
+      <a href="/">All</a>
     </nav>
   </div>
 </header>
@@ -178,15 +161,13 @@ ${navLinks(deal.category)}
   <div class="container">
     <span>&copy; ${new Date().getFullYear()} KDLS Deals</span>
     <nav class="footer-links" aria-label="Footer">
-      <a href="/">Home</a>
-      <a href="/about">About</a>
-      <a href="/contact">Contact</a>
       <a href="/disclosure">Affiliate Disclosure</a>
       <a href="/privacy">Privacy Policy</a>
     </nav>
   </div>
 </footer>
 
+<script src="/js/deals.js" defer></script>
 </body>
 </html>
 `;

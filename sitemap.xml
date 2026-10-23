@@ -1,25 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Replace https://YOUR-SITE.netlify.app with your actual Netlify URL before deploying. -->
+<!-- Replace YOUR-SITE with your actual Netlify domain before going live. -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 
-  <!-- Core pages -->
   <url>
     <loc>https://YOUR-SITE.netlify.app/</loc>
     <lastmod>2026-10-23</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
-  </url>
-  <url>
-    <loc>https://YOUR-SITE.netlify.app/about</loc>
-    <lastmod>2026-10-23</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.6</priority>
-  </url>
-  <url>
-    <loc>https://YOUR-SITE.netlify.app/contact</loc>
-    <lastmod>2026-10-23</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
   </url>
   <url>
     <loc>https://YOUR-SITE.netlify.app/disclosure</loc>
@@ -34,44 +21,7 @@
     <priority>0.4</priority>
   </url>
 
-  <!-- Category pages -->
-  <url>
-    <loc>https://YOUR-SITE.netlify.app/kitchen</loc>
-    <lastmod>2026-10-23</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://YOUR-SITE.netlify.app/home</loc>
-    <lastmod>2026-10-23</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.8</priority>
-  </url>
-  <url>
-    <loc>https://YOUR-SITE.netlify.app/tools</loc>
-    <lastmod>2026-10-23</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.8</priority>
-  </url>
-
-  <!-- Deal posts -->
-  <url>
-    <loc>https://YOUR-SITE.netlify.app/posts/instant-pot-duo-7-in-1</loc>
-    <lastmod>2026-10-23</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://YOUR-SITE.netlify.app/posts/philips-air-fryer-xxl</loc>
-    <lastmod>2026-10-22</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
-  <url>
-    <loc>https://YOUR-SITE.netlify.app/posts/blackdecker-20v-drill</loc>
-    <lastmod>2026-10-21</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
-  </url>
+  <!-- Category and deal post entries are added here as you publish content via Telegram. -->
+  <!-- Category page example: https://YOUR-SITE.netlify.app/category.html?c=kitchen -->
 
 </urlset>
