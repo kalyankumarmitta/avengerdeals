@@ -1,0 +1,5 @@
+# Replace YOUR-SITE with your actual Netlify subdomain (or custom domain).
+User-agent: *
+Allow: /
+
+Sitemap: https://YOUR-SITE.netlify.app/sitemap.xml

@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Instant Pot Duo 7-in-1 Electric Pressure Cooker, 6 Qt",
+    "date": "2026-10-23",
+    "url": "instant-pot-duo-7-in-1",
+    "price": "$59.99",
+    "was": "$99.99",
+    "category": "kitchen"
+  },
+  {
+    "title": "Philips Air Fryer XXL with Fat Removal Technology",
+    "date": "2026-10-22",
+    "url": "philips-air-fryer-xxl",
+    "price": "$149.95",
+    "was": "$249.95",
+    "category": "kitchen"
+  },
+  {
+    "title": "BLACK+DECKER 20V MAX Cordless Drill / Driver",
+    "date": "2026-10-21",
+    "url": "blackdecker-20v-drill",
+    "price": "$39.00",
+    "was": "$59.99",
+    "category": "tools"
+  }
+]

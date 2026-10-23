@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kitchen Deals — KDLS Deals</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="container">
+    <a href="/" class="site-name">KDLS Deals</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/">Home</a>
+      <a href="/kitchen" aria-current="page">Kitchen</a>
+      <a href="/home">Home</a>
+      <a href="/tools">Tools</a>
+      <a href="/about">About</a>
+      <a href="/contact">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+    <h1 class="section-title">Kitchen Deals</h1>
+    <p id="deals-status" hidden>Loading deals…</p>
+    <div id="deals-grid" class="cards" data-category="kitchen" aria-live="polite"></div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="container">
+    <span>&copy; <script>document.write(new Date().getFullYear())</script> KDLS Deals</span>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="/">Home</a>
+      <a href="/about">About</a>
+      <a href="/contact">Contact</a>
+      <a href="/disclosure">Affiliate Disclosure</a>
+      <a href="/privacy">Privacy Policy</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="/js/deals.js" defer></script>
+</body>
+</html>

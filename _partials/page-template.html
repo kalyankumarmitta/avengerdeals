@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Page Title — KDLS Deals</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- HEADER — copy from _partials/header.html -->
+<header class="site-header">
+  <div class="container">
+    <a href="/" class="site-name">KDLS Deals</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/">Home</a>
+      <a href="/kitchen">Kitchen</a>
+      <a href="/home">Home</a>
+      <a href="/tools">Tools</a>
+      <a href="/about">About</a>
+      <a href="/contact">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+
+    <h1 class="section-title">Today's Deals</h1>
+
+    <div class="cards">
+
+      <!-- Example deal card -->
+      <div class="card">
+        <img class="card__img" src="https://placehold.co/760x428" alt="Product photo">
+        <span class="card__badge">Kitchen</span>
+        <p class="card__title">Instant Pot Duo 7-in-1 Electric Pressure Cooker</p>
+        <p class="card__price">$59.99 <span class="was">$99.99</span></p>
+        <p class="card__desc">40% off — lowest price in 6 months. Fits up to 6 quarts.</p>
+        <a class="btn-telegram" href="#">
+          <!-- Telegram paper-plane icon (inline SVG, no dependency) -->
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M21.05 2.27L2.29 9.43c-1.3.5-1.28 1.21-.24 1.52l4.84 1.51 11.2-7.08c.53-.32 1.01-.15.61.21L8.35 15.3l-.31 4.98c.45 0 .65-.2.9-.44l2.16-2.1 4.49 3.32c.83.46 1.43.22 1.63-.77l2.95-13.93c.3-1.18-.45-1.71-1.12-1.09z"/>
+          </svg>
+          View on Telegram
+        </a>
+      </div>
+
+      <!-- Repeat .card blocks for each deal -->
+
+    </div>
+  </div>
+</main>
+
+<!-- FOOTER — copy from _partials/footer.html -->
+<footer class="site-footer">
+  <div class="container">
+    <span>&copy; <script>document.write(new Date().getFullYear())</script> KDLS Deals</span>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="/">Home</a>
+      <a href="/about">About</a>
+      <a href="/contact">Contact</a>
+      <a href="/disclosure">Affiliate Disclosure</a>
+      <a href="/privacy">Privacy Policy</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>
