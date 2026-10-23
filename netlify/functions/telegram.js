@@ -6,7 +6,7 @@
 'use strict';
 
 const DEALS_PATH   = 'data/deals.json';
-const AMAZON_HOSTS = new Set(['amazon.in', 'www.amazon.in', 'amzn.in', 'amzn.to', 'a.co']);
+const AMAZON_HOSTS = new Set(['amazon.in', 'www.amazon.in', 'amzn.in', 'amzn.to', 'a.co', 'link.amazon', 'link.amazon.in']);
 
 // ── Security helpers ───────────────────────────────────────────────────────────
 
