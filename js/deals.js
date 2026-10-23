@@ -2,6 +2,15 @@ const GRID_ID   = 'deals-grid';
 const STATUS_ID = 'deals-status';
 const TITLE_ID  = 'page-title';
 
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function formatDate(iso) {
   const d = new Date(iso + 'T00:00:00');
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -11,19 +20,27 @@ function buildCard(deal) {
   const card = document.createElement('div');
   card.className = 'card';
 
-  const badge = deal.category
-    ? `<span class="card__badge">${deal.category}</span>` : '';
+  // deal.image is a repo-relative path like "images/B0XXXX.jpg" or an empty string.
+  const imgEl = deal.image
+    ? `<img class="card__img" src="/${escapeHtml(deal.image)}" alt="${escapeHtml(deal.title)}" loading="lazy">`
+    : `<div class="card__img card__img--placeholder" aria-hidden="true">No image</div>`;
 
-  const pricing = deal.price
-    ? `<p class="card__price">${deal.price}${deal.was ? ` <span class="was">${deal.was}</span>` : ''}</p>`
+  const badge = deal.category
+    ? `<span class="card__badge">${escapeHtml(deal.category)}</span>` : '';
+
+  const priceEl = deal.price
+    ? `<p class="card__price">${escapeHtml(deal.price)}</p>` +
+      (deal.priceAsOf ? `<p class="card__price-note">Price as of ${formatDate(deal.priceAsOf)}</p>` : '')
     : '';
 
+  const grabUrl = deal.affiliateUrl ? escapeHtml(deal.affiliateUrl) : '#';
+
   card.innerHTML = `
+    ${imgEl}
     ${badge}
-    <p class="card__title"><a href="/posts/${deal.url}">${deal.title}</a></p>
-    <time class="card__date" datetime="${deal.date}">${formatDate(deal.date)}</time>
-    ${pricing}
-    <a class="btn-telegram" href="/posts/${deal.url}">See deal &rarr;</a>
+    <p class="card__title">${escapeHtml(deal.title)}</p>
+    ${priceEl}
+    <a class="btn-grab" href="${grabUrl}" target="_blank" rel="sponsored nofollow noopener">Grab product</a>
   `.trim();
 
   return card;
@@ -57,7 +74,7 @@ function buildCategoryNav(deals) {
 
   categories.forEach(cat => {
     const a = document.createElement('a');
-    a.href      = `/category.html?c=${encodeURIComponent(cat)}`;
+    a.href        = `/category.html?c=${encodeURIComponent(cat)}`;
     a.textContent = cat.charAt(0).toUpperCase() + cat.slice(1);
     if (currentCat === cat) a.setAttribute('aria-current', 'page');
     nav.appendChild(a);
@@ -69,7 +86,7 @@ async function loadDeals() {
   const status  = document.getElementById(STATUS_ID);
   const titleEl = document.getElementById(TITLE_ID);
 
-  let allDeals   = [];
+  let allDeals    = [];
   let fetchFailed = false;
 
   try {
@@ -84,7 +101,7 @@ async function loadDeals() {
   // Always build the category nav (shows only "All" when list is empty)
   buildCategoryNav(allDeals);
 
-  if (!grid) return; // navigation-only pages (disclosure, privacy, post pages)
+  if (!grid) return; // nav-only pages (disclosure, privacy)
 
   if (fetchFailed) {
     if (status) {
@@ -99,7 +116,6 @@ async function loadDeals() {
   const category = params.get('c') ? params.get('c').toLowerCase()
                                     : (grid.dataset.category || null);
 
-  // Update the page title dynamically on category pages
   if (titleEl && category) {
     const label = category.charAt(0).toUpperCase() + category.slice(1);
     titleEl.textContent = `${label} Deals`;

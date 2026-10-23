@@ -156,8 +156,23 @@ main { padding-block: 2rem; }
   flex: 1;
 }
 
-/* ── CTA button (green, replaces Telegram blue) ───────────── */
-.btn-telegram {
+.card__price-note {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: -0.4rem;
+}
+
+.card__img--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* ── CTA buttons ──────────────────────────────────────────── */
+.btn-telegram,
+.btn-grab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -174,7 +189,8 @@ main { padding-block: 2rem; }
   text-align: center;
 }
 
-.btn-telegram:hover {
+.btn-telegram:hover,
+.btn-grab:hover {
   background: var(--accent-dk);
   color: #0a1a0e;
   text-decoration: none;
@@ -211,6 +227,15 @@ main { padding-block: 2rem; }
 .footer-links { display: flex; flex-wrap: wrap; gap: 1rem; }
 .footer-links a { color: var(--muted); }
 .footer-links a:hover { color: var(--accent); text-decoration: none; }
+
+.footer-disclosure {
+  width: 100%;
+  font-size: 0.72rem;
+  color: var(--muted);
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+  line-height: 1.6;
+}
 
 /* ── Utility ──────────────────────────────────────────────── */
 .visually-hidden {

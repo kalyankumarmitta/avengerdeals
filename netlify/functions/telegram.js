@@ -1,38 +1,13 @@
-// Telegram webhook — receives channel posts, appends to data/deals.json,
-// and commits a generated HTML post page, all via the GitHub Contents API.
-// Node 18+ fetch only — no npm dependencies.
-//
-// Required env vars:
-//   TELEGRAM_SECRET      — secret token set when registering the webhook
-//   GITHUB_TOKEN         — fine-grained PAT with contents: write on this repo
-//   GITHUB_REPO          — "owner/repo-name"
-//   TELEGRAM_CHANNEL_URL — full URL of your public Telegram channel
-//   AMAZON_ASSOCIATE_TAG — your Associates tag (e.g. yoursite-21)
+// Telegram webhook — manual deal entry via labelled fields or legacy format.
+// Accepts photo (caption) or text messages from the owner.
+// Commits product image and deal data to the repo via the GitHub Contents API.
+// Node 18+ only — no npm dependencies.
 
-const KNOWN_CATEGORIES = ['kitchen', 'home', 'tools'];
-const DEALS_PATH = 'data/deals.json';
+'use strict';
 
-// ── Hashtag helpers ────────────────────────────────────────────────────────────
-
-function extractCategory(text) {
-  const match = text.match(/#(\w+)/i);
-  if (match && KNOWN_CATEGORIES.includes(match[1].toLowerCase())) {
-    return match[1].toLowerCase();
-  }
-  return 'general';
-}
-
-function stripHashtags(text) {
-  return text.replace(/#\w+/g, '').replace(/\s{2,}/g, ' ').trim();
-}
-
-function slugify(text) {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 80);
-}
+const DEALS_PATH   = 'data/deals.json';
+const AMAZON_HOSTS = new Set(['amazon.in', 'www.amazon.in', 'amzn.in', 'amzn.to', 'a.co']);
+const SHORT_HOSTS  = new Set(['amzn.in', 'amzn.to', 'a.co']);
 
 // ── Security helpers ───────────────────────────────────────────────────────────
 
@@ -56,166 +31,154 @@ function safeUrl(url) {
   }
 }
 
-// Append/replace the Associates tag on Amazon and amzn URLs.
-function tagAmazonUrl(url, tag) {
-  if (!url || !tag) return url;
+// ── Amazon URL helpers ─────────────────────────────────────────────────────────
+
+function isAmazonHost(hostname) {
+  return AMAZON_HOSTS.has(hostname.toLowerCase());
+}
+
+// Follow redirects (short links: amzn.in, amzn.to, a.co) and return the final URL.
+async function resolveUrl(url) {
   try {
-    const u = new URL(url);
-    if (/amazon\.|amzn\./i.test(u.hostname)) {
-      u.searchParams.set('tag', tag);
-      return u.toString();
-    }
-  } catch {}
-  return url;
+    const res = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+    return res.url;
+  } catch {
+    return url;
+  }
 }
 
-// ── Post HTML template ─────────────────────────────────────────────────────────
-
-function formatDate(iso) {
-  return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', {
-    year: 'numeric', month: 'long', day: 'numeric',
-  });
+// Extract a 10-char ASIN from /dp/ASIN or /gp/product/ASIN path segments.
+function extractAsin(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const m = pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+    return m ? m[1].toUpperCase() : null;
+  } catch {
+    return null;
+  }
 }
 
-function postHtml(deal, channelUrl) {
-  const safeTitle    = escapeHtml(deal.title);
-  const safeCategory = escapeHtml(deal.category);
-  const safePrice    = deal.price ? escapeHtml(deal.price) : null;
-  const safeWas      = deal.was  ? escapeHtml(deal.was)   : null;
-  const safeAmazon   = safeUrl(deal.amazonUrl) || '#';
-  const safeChannel  = safeUrl(channelUrl) || '#';
+// ── Text / field-parsing helpers ───────────────────────────────────────────────
 
-  const pricing = safePrice
-    ? `<p class="card__price">${safePrice}${safeWas ? ` <span class="was">${safeWas}</span>` : ''}</p>`
-    : '';
+function extractCategoryFromHashtag(text) {
+  const m = text.match(/#([a-zA-Z]\w*)/);
+  if (!m) return 'general';
+  return m[1].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'general';
+}
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${safeTitle} — KDLS Deals</title>
-  <link rel="stylesheet" href="/css/style.css">
-  <style>
-    .post-wrap { max-width: 640px; }
-    .post-meta { font-size: .85rem; color: var(--muted); margin-bottom: 1rem; }
-    .post-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.25rem; }
-    .btn-amazon {
-      display: inline-flex; align-items: center; gap: .5rem;
-      background: #ff9900; color: #111; font-size: .9rem; font-weight: 700;
-      padding: .6rem 1.1rem; border-radius: 8px; transition: background .15s;
+function stripHashtags(text) {
+  return text.replace(/#\w+/g, '').replace(/\s{2,}/g, ' ').trim();
+}
+
+// Normalise a category label: lowercase, trim, spaces → hyphens, strip non-alnum.
+function normalizeCategory(cat) {
+  if (!cat) return 'general';
+  const n = cat.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/^-|-$/g, '');
+  return n || 'general';
+}
+
+// Parse a message body.
+// Labelled format (preferred):
+//   Name: Stainless Steel Kettle
+//   Price: ₹1,299
+//   Category: Kitchen
+//   Link: https://amzn.in/d/xxx
+// Legacy fallback (no labels detected):
+//   first line = Amazon URL, remaining lines = name, #hashtag = category
+function parseMessageText(text) {
+  if (!text || !text.trim()) return { name: null, price: null, category: null, link: null };
+
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
+
+  const labelPattern = /^(name|price|category|link)\s*:/i;
+  if (lines.some(l => labelPattern.test(l))) {
+    const fields = {};
+    for (const line of lines) {
+      const m = line.match(/^(\w+)\s*:\s*([\s\S]+)$/i);
+      if (m) fields[m[1].toLowerCase()] = m[2].trim();
     }
-    .btn-amazon:hover { background: #e68a00; text-decoration: none; color: #111; }
-    .disclosure-note {
-      margin-top: 1.5rem; padding: .75rem 1rem;
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; font-size: .8rem; color: var(--muted);
-    }
-  </style>
-</head>
-<body>
+    return {
+      name:     fields['name']     || null,
+      price:    fields['price']    || null,
+      category: fields['category'] || null,
+      link:     fields['link']     || null,
+    };
+  }
 
-<header class="site-header">
-  <div class="container">
-    <a href="/" class="site-name">KDLS Deals</a>
-    <nav class="site-nav" aria-label="Main">
-      <a href="/">All</a>
-    </nav>
-  </div>
-</header>
+  // Legacy: first non-empty line = link, rest = name, #hashtag = category
+  const link     = lines[0] || null;
+  const nameRaw  = lines.slice(1).join(' ').trim();
+  const name     = nameRaw ? stripHashtags(nameRaw) || null : null;
+  const category = extractCategoryFromHashtag(text);
+  return { name, price: null, category, link };
+}
 
-<main>
-  <div class="container post-wrap">
-    <span class="card__badge">${safeCategory}</span>
-    <h1 style="margin-top:.5rem;margin-bottom:.5rem;font-size:1.4rem;line-height:1.3;">${safeTitle}</h1>
-    <p class="post-meta">Posted <time datetime="${escapeHtml(deal.date)}">${formatDate(deal.date)}</time></p>
+// ── Telegram API helpers ───────────────────────────────────────────────────────
 
-    ${pricing}
+async function sendTelegramMessage(chatId, text) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token || !chatId) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ chat_id: chatId, text }),
+    });
+  } catch (err) {
+    console.error('Telegram send error:', err.message);
+  }
+}
 
-    <div class="post-actions">
-      <a class="btn-amazon"
-         href="${escapeHtml(safeAmazon)}"
-         rel="sponsored nofollow"
-         target="_blank">
-        Check on Amazon
-      </a>
-      <a class="btn-telegram"
-         href="${escapeHtml(safeChannel)}"
-         target="_blank"
-         rel="noopener noreferrer">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M21.05 2.27L2.29 9.43c-1.3.5-1.28 1.21-.24 1.52l4.84 1.51 11.2-7.08c.53-.32 1.01-.15.61.21L8.35 15.3l-.31 4.98c.45 0 .65-.2.9-.44l2.16-2.1 4.49 3.32c.83.46 1.43.22 1.63-.77l2.95-13.93c.3-1.18-.45-1.71-1.12-1.09z"/>
-        </svg>
-        Join our Telegram channel
-      </a>
-    </div>
+// Returns the server-side file_path for a Telegram file_id.
+async function getTelegramFilePath(fileId) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const res   = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`);
+  const data  = await res.json();
+  if (!data.ok) throw new Error(`getFile: ${data.description}`);
+  return data.result.file_path;
+}
 
-    <p class="disclosure-note">
-      This page contains affiliate links. If you buy through them we may earn a small commission
-      at no extra cost to you. See our <a href="/disclosure">Affiliate Disclosure</a>.
-    </p>
-  </div>
-</main>
-
-<footer class="site-footer">
-  <div class="container">
-    <span>&copy; ${new Date().getFullYear()} KDLS Deals</span>
-    <nav class="footer-links" aria-label="Footer">
-      <a href="/disclosure">Affiliate Disclosure</a>
-      <a href="/privacy">Privacy Policy</a>
-    </nav>
-  </div>
-</footer>
-
-<script src="/js/deals.js" defer></script>
-</body>
-</html>
-`;
+// Downloads a Telegram file by its file_path and returns a Buffer.
+// The download URL contains the bot token; it is never stored or returned to clients.
+async function downloadTelegramFile(filePath) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const res   = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
+  if (!res.ok) throw new Error(`Photo download ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
 }
 
 // ── GitHub Contents API helpers ────────────────────────────────────────────────
 
-async function readDealsFile(apiBase, headers) {
-  const res = await fetch(apiBase, { headers });
-  // Treat a missing file as an empty list rather than a hard error.
-  if (res.status === 404) return { content: [], sha: null };
+// GET a file; returns { data, sha } or { data: null, sha: null } on 404.
+async function ghGet(url, headers) {
+  const res = await fetch(url, { headers });
+  if (res.status === 404) return { data: null, sha: null };
   if (!res.ok) throw new Error(`GitHub GET ${res.status}`);
   const data = await res.json();
-  const content = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
-  return { content, sha: data.sha };
+  return { data, sha: data.sha };
 }
 
-async function writeDealsFile(apiBase, headers, deals, sha, commitMessage) {
-  const encoded = Buffer.from(JSON.stringify(deals, null, 2) + '\n').toString('base64');
-  const body = { message: commitMessage, content: encoded };
-  // Omit sha when creating a new file; include it when updating an existing one.
+// PUT (create or update) a file; content must be base64-encoded.
+async function ghPut(url, headers, encodedContent, sha, commitMessage) {
+  const body = { message: commitMessage, content: encodedContent };
   if (sha) body.sha = sha;
-  const res = await fetch(apiBase, {
-    method: 'PUT',
+  const res = await fetch(url, {
+    method:  'PUT',
     headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body:    JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`GitHub PUT ${res.status}`);
-}
-
-async function upsertPostFile(apiBase, headers, html, commitMessage) {
-  let sha;
-  const getRes = await fetch(apiBase, { headers });
-  if (getRes.ok) {
-    const existing = await getRes.json();
-    sha = existing.sha;
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`GitHub PUT ${res.status}: ${errText.slice(0, 200)}`);
   }
+  return res.json();
+}
 
-  const encoded = Buffer.from(html).toString('base64');
-  const body = { message: commitMessage, content: encoded };
-  if (sha) body.sha = sha;
-
-  const res = await fetch(apiBase, {
-    method: 'PUT',
-    headers: { ...headers, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`GitHub PUT post ${res.status}`);
+async function readDealsFile(url, headers) {
+  const { data, sha } = await ghGet(url, headers);
+  if (!data) return { deals: [], sha: null };
+  const deals = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
+  return { deals, sha };
 }
 
 // ── Main handler ───────────────────────────────────────────────────────────────
@@ -238,47 +201,123 @@ exports.handler = async (event) => {
   }
 
   const message = update.message || update.channel_post;
-  if (!message || !message.text) {
+  if (!message) return { statusCode: 200, body: 'OK' };
+
+  // Accept only photo or text messages; ignore everything else (sticker, voice, …).
+  const hasPhoto   = Array.isArray(message.photo) && message.photo.length > 0;
+  const hasText    = typeof message.text === 'string';
+  if (!hasPhoto && !hasText) return { statusCode: 200, body: 'OK' };
+
+  const rawText = hasPhoto ? (message.caption || '') : message.text;
+
+  // Owner check: ignore messages from anyone other than the configured owner.
+  const ownerId = process.env.OWNER_TELEGRAM_ID;
+  if (ownerId && message.from && String(message.from.id) !== String(ownerId)) {
     return { statusCode: 200, body: 'OK' };
   }
 
-  const rawText = message.text;
-  const category = extractCategory(rawText);
-  const title    = stripHashtags(rawText);
-  const date     = new Date().toISOString().slice(0, 10);
-  const url      = slugify(title);
+  const ownerChatId = message.chat?.id;
 
-  // Extract first URL from message entities then validate and tag it.
-  const urlEntity = (message.entities || []).find(e => e.type === 'url');
-  const rawAmazon = urlEntity
-    ? rawText.slice(urlEntity.offset, urlEntity.offset + urlEntity.length)
-    : null;
-  const amazonUrl = tagAmazonUrl(safeUrl(rawAmazon), process.env.AMAZON_ASSOCIATE_TAG);
+  // Parse the message body.
+  const parsed = parseMessageText(rawText);
 
-  const newDeal = { title, date, url, category, ...(amazonUrl && { amazonUrl }) };
+  // Validate required fields.
+  if (!parsed.name) {
+    await sendTelegramMessage(ownerChatId,
+      'Missing field: Name. Include "Name: Product Title" in your message.');
+    return { statusCode: 200, body: 'OK' };
+  }
+  if (!parsed.link) {
+    await sendTelegramMessage(ownerChatId,
+      'Missing field: Link. Include "Link: https://amzn.in/..." in your message.');
+    return { statusCode: 200, body: 'OK' };
+  }
 
-  const repo       = process.env.GITHUB_REPO;
-  const token      = process.env.GITHUB_TOKEN;
-  const channelUrl = process.env.TELEGRAM_CHANNEL_URL || '#';
-  const ghHeaders  = {
-    Authorization: `Bearer ${token}`,
-    Accept: 'application/vnd.github+json',
+  // Validate Amazon-only link.
+  const fullUrl = parsed.link.startsWith('http') ? parsed.link : `https://${parsed.link}`;
+  let parsedHost;
+  try {
+    parsedHost = new URL(fullUrl).hostname.toLowerCase();
+  } catch {
+    await sendTelegramMessage(ownerChatId, 'Invalid link. Please use an Amazon URL.');
+    return { statusCode: 200, body: 'OK' };
+  }
+
+  if (!isAmazonHost(parsedHost)) {
+    await sendTelegramMessage(ownerChatId, 'Only Amazon links are supported.');
+    return { statusCode: 200, body: 'OK' };
+  }
+
+  // Resolve short links and extract ASIN.
+  const resolvedUrl = SHORT_HOSTS.has(parsedHost) ? await resolveUrl(fullUrl) : fullUrl;
+  const asin        = extractAsin(resolvedUrl);
+
+  if (!asin) {
+    await sendTelegramMessage(ownerChatId,
+      'Could not extract ASIN. Use a direct product page URL (/dp/ or /gp/product/).');
+    return { statusCode: 200, body: 'OK' };
+  }
+
+  const amazonTag    = process.env.AMAZON_TAG || '';
+  const affiliateUrl = `https://www.amazon.in/dp/${asin}${amazonTag ? `?tag=${amazonTag}` : ''}`;
+  const date         = new Date().toISOString().slice(0, 10);
+  const category     = normalizeCategory(parsed.category);
+  const price        = parsed.price || null;
+
+  // GitHub API setup.
+  const repo      = process.env.GITHUB_REPO;
+  const token     = process.env.GITHUB_TOKEN;
+  const ghHeaders = {
+    Authorization:          `Bearer ${token}`,
+    Accept:                 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
   };
+  const repoBase = `https://api.github.com/repos/${repo}/contents`;
 
+  // Download and commit product image if a photo was sent.
+  let imagePath = '';
+  if (hasPhoto) {
+    try {
+      const largestPhoto  = message.photo[message.photo.length - 1];
+      const filePath      = await getTelegramFilePath(largestPhoto.file_id);
+      const imageBuffer   = await downloadTelegramFile(filePath);
+      const imageApiUrl   = `${repoBase}/images/${asin}.jpg`;
+      const { sha: imgSha } = await ghGet(imageApiUrl, ghHeaders);
+      await ghPut(imageApiUrl, ghHeaders, imageBuffer.toString('base64'), imgSha, `image: ${asin}`);
+      imagePath = `images/${asin}.jpg`;
+    } catch (err) {
+      console.error('Photo save error:', err.message);
+      await sendTelegramMessage(ownerChatId,
+        `Warning: could not save photo — ${err.message}. Publishing without image.`);
+    }
+  }
+
+  const newDeal = {
+    asin,
+    title:      parsed.name,
+    image:      imagePath,
+    price,
+    priceAsOf:  price ? date : null,
+    category,
+    affiliateUrl,
+    date,
+  };
+
+  // Update data/deals.json: remove existing entry for same ASIN, prepend new one.
   try {
-    const dealsApiBase = `https://api.github.com/repos/${repo}/contents/${DEALS_PATH}`;
-    const { content: deals, sha } = await readDealsFile(dealsApiBase, ghHeaders);
-    deals.push(newDeal);
-    await writeDealsFile(dealsApiBase, ghHeaders, deals, sha, `Add deal: ${title}`);
-
-    const postApiBase = `https://api.github.com/repos/${repo}/contents/posts/${url}.html`;
-    await upsertPostFile(postApiBase, ghHeaders, postHtml(newDeal, channelUrl), `Add post: ${title}`);
+    const dealsApiUrl = `${repoBase}/${DEALS_PATH}`;
+    const { deals, sha } = await readDealsFile(dealsApiUrl, ghHeaders);
+    const filtered = deals.filter(d => d.asin !== asin);
+    filtered.unshift(newDeal);
+    const encoded = Buffer.from(JSON.stringify(filtered, null, 2) + '\n').toString('base64');
+    await ghPut(dealsApiUrl, ghHeaders, encoded, sha, `deal: ${asin} — ${parsed.name}`);
   } catch (err) {
-    console.error('telegram.js GitHub error:', err.message);
-    // Return 500 so Telegram retries, but log the cause.
+    console.error('GitHub error:', err.message);
+    await sendTelegramMessage(ownerChatId, `Error saving deal: ${err.message}`);
     return { statusCode: 500, body: 'Internal Server Error' };
   }
 
+  const siteUrl = process.env.SITE_URL || 'https://avengerdeals.netlify.app';
+  await sendTelegramMessage(ownerChatId, `Published: ${parsed.name} in ${category}\n${siteUrl}`);
   return { statusCode: 200, body: 'OK' };
 };
