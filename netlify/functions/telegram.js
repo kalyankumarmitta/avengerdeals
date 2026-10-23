@@ -1,5 +1,5 @@
-// Telegram webhook — manual deal entry via labelled fields or legacy format.
-// Accepts photo (caption) or text messages from the owner.
+// Telegram webhook — manual deal entry via labelled caption fields.
+// Accepts photo + caption from the owner only.
 // Commits product image and deal data to the repo via the GitHub Contents API.
 // Node 18+ only — no npm dependencies.
 
@@ -7,110 +7,56 @@
 
 const DEALS_PATH   = 'data/deals.json';
 const AMAZON_HOSTS = new Set(['amazon.in', 'www.amazon.in', 'amzn.in', 'amzn.to', 'a.co']);
-const SHORT_HOSTS  = new Set(['amzn.in', 'amzn.to', 'a.co']);
 
 // ── Security helpers ───────────────────────────────────────────────────────────
 
-function escapeHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// Only accept https:// URLs to block javascript: and data: URIs.
-function safeUrl(url) {
+// Only accept https:// URLs.
+function safeHttpsUrl(url) {
   if (!url) return null;
   try {
-    const u = new URL(url);
-    return u.protocol === 'https:' ? url : null;
+    const u = new URL(url.startsWith('http') ? url : `https://${url}`);
+    return u.protocol === 'https:' ? u.href : null;
   } catch {
     return null;
   }
 }
 
-// ── Amazon URL helpers ─────────────────────────────────────────────────────────
+// ── Text helpers ───────────────────────────────────────────────────────────────
 
-function isAmazonHost(hostname) {
-  return AMAZON_HOSTS.has(hostname.toLowerCase());
+// slug: lowercase, non-alphanumeric → hyphen, max 60 chars.
+function slugify(name) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60);
 }
 
-// Follow redirects (short links: amzn.in, amzn.to, a.co) and return the final URL.
-async function resolveUrl(url) {
-  try {
-    const res = await fetch(url, { method: 'HEAD', redirect: 'follow' });
-    return res.url;
-  } catch {
-    return url;
-  }
-}
-
-// Extract a 10-char ASIN from /dp/ASIN or /gp/product/ASIN path segments.
-function extractAsin(url) {
-  try {
-    const pathname = new URL(url).pathname;
-    const m = pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
-    return m ? m[1].toUpperCase() : null;
-  } catch {
-    return null;
-  }
-}
-
-// ── Text / field-parsing helpers ───────────────────────────────────────────────
-
-function extractCategoryFromHashtag(text) {
-  const m = text.match(/#([a-zA-Z]\w*)/);
-  if (!m) return 'general';
-  return m[1].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'general';
-}
-
-function stripHashtags(text) {
-  return text.replace(/#\w+/g, '').replace(/\s{2,}/g, ' ').trim();
-}
-
-// Normalise a category label: lowercase, trim, spaces → hyphens, strip non-alnum.
+// category: lowercase, trim, spaces → hyphens, strip special chars.
 function normalizeCategory(cat) {
   if (!cat) return 'general';
-  const n = cat.toLowerCase().trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/^-|-$/g, '');
+  const n = cat.toLowerCase().trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/^-|-$/g, '');
   return n || 'general';
 }
 
-// Parse a message body.
-// Labelled format (preferred):
-//   Name: Stainless Steel Kettle
-//   Price: ₹1,299
-//   Category: Kitchen
-//   Link: https://amzn.in/d/xxx
-// Legacy fallback (no labels detected):
-//   first line = Amazon URL, remaining lines = name, #hashtag = category
-function parseMessageText(text) {
-  if (!text || !text.trim()) return { name: null, price: null, category: null, link: null };
-
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l);
-
-  const labelPattern = /^(name|price|category|link)\s*:/i;
-  if (lines.some(l => labelPattern.test(l))) {
-    const fields = {};
-    for (const line of lines) {
-      const m = line.match(/^(\w+)\s*:\s*([\s\S]+)$/i);
-      if (m) fields[m[1].toLowerCase()] = m[2].trim();
-    }
-    return {
-      name:     fields['name']     || null,
-      price:    fields['price']    || null,
-      category: fields['category'] || null,
-      link:     fields['link']     || null,
-    };
+// Parse labelled fields from a caption or text body.
+// Recognised keys (case-insensitive): Name, Price, Category, Affiliate Link, Link.
+function parseFields(text) {
+  const fields = {};
+  if (!text) return fields;
+  for (const line of text.split('\n')) {
+    const m = line.match(/^([a-zA-Z](?:[a-zA-Z ]*[a-zA-Z])?)\s*:\s*(.+)$/);
+    if (m) fields[m[1].toLowerCase().trim()] = m[2].trim();
   }
-
-  // Legacy: first non-empty line = link, rest = name, #hashtag = category
-  const link     = lines[0] || null;
-  const nameRaw  = lines.slice(1).join(' ').trim();
-  const name     = nameRaw ? stripHashtags(nameRaw) || null : null;
-  const category = extractCategoryFromHashtag(text);
-  return { name, price: null, category, link };
+  return {
+    name:     fields['name']              || null,
+    price:    fields['price']             || null,
+    category: fields['category']          || null,
+    link:     fields['affiliate link'] || fields['link'] || null,
+  };
 }
 
 // ── Telegram API helpers ───────────────────────────────────────────────────────
@@ -132,14 +78,17 @@ async function sendTelegramMessage(chatId, text) {
 // Returns the server-side file_path for a Telegram file_id.
 async function getTelegramFilePath(fileId) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const res   = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`);
-  const data  = await res.json();
+  const res   = await fetch(
+    `https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`,
+  );
+  const data = await res.json();
   if (!data.ok) throw new Error(`getFile: ${data.description}`);
   return data.result.file_path;
 }
 
-// Downloads a Telegram file by its file_path and returns a Buffer.
-// The download URL contains the bot token; it is never stored or returned to clients.
+// Downloads a Telegram file and returns a Buffer.
+// The download URL contains the bot token and is used only inside this function.
+// It is never written to any committed file or returned in any response.
 async function downloadTelegramFile(filePath) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const res   = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`);
@@ -158,7 +107,7 @@ async function ghGet(url, headers) {
   return { data, sha: data.sha };
 }
 
-// PUT (create or update) a file; content must be base64-encoded.
+// PUT (create or update) a file; content must already be base64-encoded.
 async function ghPut(url, headers, encodedContent, sha, commitMessage) {
   const body = { message: commitMessage, content: encodedContent };
   if (sha) body.sha = sha;
@@ -203,12 +152,10 @@ exports.handler = async (event) => {
   const message = update.message || update.channel_post;
   if (!message) return { statusCode: 200, body: 'OK' };
 
-  // Accept only photo or text messages; ignore everything else (sticker, voice, …).
-  const hasPhoto   = Array.isArray(message.photo) && message.photo.length > 0;
-  const hasText    = typeof message.text === 'string';
+  // Accept only photo or text messages; silently ignore everything else.
+  const hasPhoto = Array.isArray(message.photo) && message.photo.length > 0;
+  const hasText  = typeof message.text === 'string';
   if (!hasPhoto && !hasText) return { statusCode: 200, body: 'OK' };
-
-  const rawText = hasPhoto ? (message.caption || '') : message.text;
 
   // Owner check: ignore messages from anyone other than the configured owner.
   const ownerId = process.env.OWNER_TELEGRAM_ID;
@@ -217,52 +164,43 @@ exports.handler = async (event) => {
   }
 
   const ownerChatId = message.chat?.id;
+  const rawText     = hasPhoto ? (message.caption || '') : (message.text || '');
 
-  // Parse the message body.
-  const parsed = parseMessageText(rawText);
+  // Parse labelled fields.
+  const fields = parseFields(rawText);
 
   // Validate required fields.
-  if (!parsed.name) {
-    await sendTelegramMessage(ownerChatId,
-      'Missing field: Name. Include "Name: Product Title" in your message.');
-    return { statusCode: 200, body: 'OK' };
-  }
-  if (!parsed.link) {
-    await sendTelegramMessage(ownerChatId,
-      'Missing field: Link. Include "Link: https://amzn.in/..." in your message.');
+  const missing = [];
+  if (!fields.name) missing.push('Name');
+  if (!fields.link) missing.push('Affiliate Link');
+  if (!hasPhoto)    missing.push('photo');
+
+  if (missing.length > 0) {
+    await sendTelegramMessage(ownerChatId, `Missing: ${missing.join(', ')}.`);
     return { statusCode: 200, body: 'OK' };
   }
 
-  // Validate Amazon-only link.
-  const fullUrl = parsed.link.startsWith('http') ? parsed.link : `https://${parsed.link}`;
+  // Validate Amazon link — accept only the listed domains; do not modify the link.
+  const affiliateUrl = safeHttpsUrl(fields.link);
+  if (!affiliateUrl) {
+    await sendTelegramMessage(ownerChatId, 'Invalid link. Please use a valid https:// Amazon URL.');
+    return { statusCode: 200, body: 'OK' };
+  }
   let parsedHost;
   try {
-    parsedHost = new URL(fullUrl).hostname.toLowerCase();
+    parsedHost = new URL(affiliateUrl).hostname.toLowerCase();
   } catch {
-    await sendTelegramMessage(ownerChatId, 'Invalid link. Please use an Amazon URL.');
+    await sendTelegramMessage(ownerChatId, 'Invalid link URL.');
+    return { statusCode: 200, body: 'OK' };
+  }
+  if (!AMAZON_HOSTS.has(parsedHost)) {
+    await sendTelegramMessage(ownerChatId, 'Only Amazon affiliate links are supported.');
     return { statusCode: 200, body: 'OK' };
   }
 
-  if (!isAmazonHost(parsedHost)) {
-    await sendTelegramMessage(ownerChatId, 'Only Amazon links are supported.');
-    return { statusCode: 200, body: 'OK' };
-  }
-
-  // Resolve short links and extract ASIN.
-  const resolvedUrl = SHORT_HOSTS.has(parsedHost) ? await resolveUrl(fullUrl) : fullUrl;
-  const asin        = extractAsin(resolvedUrl);
-
-  if (!asin) {
-    await sendTelegramMessage(ownerChatId,
-      'Could not extract ASIN. Use a direct product page URL (/dp/ or /gp/product/).');
-    return { statusCode: 200, body: 'OK' };
-  }
-
-  const amazonTag    = process.env.AMAZON_TAG || '';
-  const affiliateUrl = `https://www.amazon.in/dp/${asin}${amazonTag ? `?tag=${amazonTag}` : ''}`;
-  const date         = new Date().toISOString().slice(0, 10);
-  const category     = normalizeCategory(parsed.category);
-  const price        = parsed.price || null;
+  const slug     = slugify(fields.name);
+  const category = normalizeCategory(fields.category);
+  const date     = new Date().toISOString().slice(0, 10);
 
   // GitHub API setup.
   const repo      = process.env.GITHUB_REPO;
@@ -274,50 +212,48 @@ exports.handler = async (event) => {
   };
   const repoBase = `https://api.github.com/repos/${repo}/contents`;
 
-  // Download and commit product image if a photo was sent.
+  // Download and commit product image (photo is required, so hasPhoto is always true here).
   let imagePath = '';
-  if (hasPhoto) {
-    try {
-      const largestPhoto  = message.photo[message.photo.length - 1];
-      const filePath      = await getTelegramFilePath(largestPhoto.file_id);
-      const imageBuffer   = await downloadTelegramFile(filePath);
-      const imageApiUrl   = `${repoBase}/images/${asin}.jpg`;
-      const { sha: imgSha } = await ghGet(imageApiUrl, ghHeaders);
-      await ghPut(imageApiUrl, ghHeaders, imageBuffer.toString('base64'), imgSha, `image: ${asin}`);
-      imagePath = `images/${asin}.jpg`;
-    } catch (err) {
-      console.error('Photo save error:', err.message);
-      await sendTelegramMessage(ownerChatId,
-        `Warning: could not save photo — ${err.message}. Publishing without image.`);
-    }
+  try {
+    const largestPhoto    = message.photo[message.photo.length - 1];
+    const filePath        = await getTelegramFilePath(largestPhoto.file_id);
+    const imageBuffer     = await downloadTelegramFile(filePath);
+    const imageApiUrl     = `${repoBase}/images/${slug}.jpg`;
+    const { sha: imgSha } = await ghGet(imageApiUrl, ghHeaders);
+    await ghPut(imageApiUrl, ghHeaders, imageBuffer.toString('base64'), imgSha, `image: ${slug}`);
+    imagePath = `images/${slug}.jpg`;
+  } catch (err) {
+    console.error('Photo save error:', err.message);
+    await sendTelegramMessage(ownerChatId, `Error saving photo: ${err.message}`);
+    return { statusCode: 500, body: 'Internal Server Error' };
   }
 
   const newDeal = {
-    asin,
-    title:      parsed.name,
-    image:      imagePath,
-    price,
-    priceAsOf:  price ? date : null,
+    id:          slug,
+    title:       fields.name,
+    image:       imagePath,
+    price:       fields.price || null,
     category,
     affiliateUrl,
     date,
   };
 
-  // Update data/deals.json: remove existing entry for same ASIN, prepend new one.
+  // Save to data/deals.json — deduplicate by id, newest first.
   try {
     const dealsApiUrl = `${repoBase}/${DEALS_PATH}`;
     const { deals, sha } = await readDealsFile(dealsApiUrl, ghHeaders);
-    const filtered = deals.filter(d => d.asin !== asin);
+    const filtered = deals.filter(d => d.id !== slug);
     filtered.unshift(newDeal);
     const encoded = Buffer.from(JSON.stringify(filtered, null, 2) + '\n').toString('base64');
-    await ghPut(dealsApiUrl, ghHeaders, encoded, sha, `deal: ${asin} — ${parsed.name}`);
+    await ghPut(dealsApiUrl, ghHeaders, encoded, sha, `deal: ${slug} — ${fields.name}`);
   } catch (err) {
     console.error('GitHub error:', err.message);
     await sendTelegramMessage(ownerChatId, `Error saving deal: ${err.message}`);
     return { statusCode: 500, body: 'Internal Server Error' };
   }
 
+  const displayCategory = category.charAt(0).toUpperCase() + category.slice(1);
   const siteUrl = process.env.SITE_URL || 'https://avengerdeals.netlify.app';
-  await sendTelegramMessage(ownerChatId, `Published: ${parsed.name} in ${category}\n${siteUrl}`);
+  await sendTelegramMessage(ownerChatId, `Published: ${fields.name} in ${displayCategory}\n${siteUrl}`);
   return { statusCode: 200, body: 'OK' };
 };

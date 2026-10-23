@@ -20,35 +20,41 @@ function buildCard(deal) {
   const card = document.createElement('div');
   card.className = 'card';
 
-  // deal.image is a repo-relative path like "images/B0XXXX.jpg" or an empty string.
+  // deal.image is a repo-relative path like "images/slug.jpg", or empty string.
   const imgEl = deal.image
     ? `<img class="card__img" src="/${escapeHtml(deal.image)}" alt="${escapeHtml(deal.title)}" loading="lazy">`
     : `<div class="card__img card__img--placeholder" aria-hidden="true">No image</div>`;
 
-  const badge = deal.category
-    ? `<span class="card__badge">${escapeHtml(deal.category)}</span>` : '';
+  const catLabel = deal.category
+    ? deal.category.charAt(0).toUpperCase() + deal.category.slice(1) : '';
+  const badge = catLabel
+    ? `<span class="card__badge">${escapeHtml(catLabel)}</span>` : '';
 
   const priceEl = deal.price
-    ? `<p class="card__price">${escapeHtml(deal.price)}</p>` +
-      (deal.priceAsOf ? `<p class="card__price-note">Price as of ${formatDate(deal.priceAsOf)}</p>` : '')
-    : '';
+    ? `<p class="card__price">Price: ${escapeHtml(deal.price)}</p>` : '';
 
-  const grabUrl = deal.affiliateUrl ? escapeHtml(deal.affiliateUrl) : '#';
+  const dateEl = deal.date
+    ? `<time class="card__date" datetime="${escapeHtml(deal.date)}">${formatDate(deal.date)}</time>` : '';
+
+  const grabUrl    = deal.affiliateUrl ? escapeHtml(deal.affiliateUrl) : '#';
+  const urlDisplay = deal.affiliateUrl ? escapeHtml(deal.affiliateUrl) : '';
 
   card.innerHTML = `
     ${imgEl}
     ${badge}
     <p class="card__title">${escapeHtml(deal.title)}</p>
     ${priceEl}
+    ${dateEl}
     <a class="btn-grab" href="${grabUrl}" target="_blank" rel="sponsored nofollow noopener">Grab product</a>
+    ${urlDisplay ? `<a class="card__url" href="${grabUrl}" target="_blank" rel="sponsored nofollow noopener">${urlDisplay}</a>` : ''}
   `.trim();
 
   return card;
 }
 
 // Appends category links into .site-nav after the "All" anchor.
-// Only categories present in the current deals array are shown.
-// When deals is empty, only "All" remains in the nav.
+// Only categories that have at least one deal are shown.
+// When deals is empty, only "All" remains.
 function buildCategoryNav(deals) {
   const nav = document.querySelector('.site-nav');
   if (!nav) return;
