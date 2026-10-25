@@ -123,6 +123,20 @@ async function ghPut(url, headers, encodedContent, sha, commitMessage) {
   return res.json();
 }
 
+// DELETE a file from the repo; sha is required by GitHub.
+async function ghDelete(url, headers, sha, commitMessage) {
+  const res = await fetch(url, {
+    method:  'DELETE',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ message: commitMessage, sha }),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`GitHub DELETE ${res.status}: ${errText.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
 async function readDealsFile(url, headers) {
   const { data, sha } = await ghGet(url, headers);
   if (!data) return { deals: [], sha: null };
@@ -165,6 +179,69 @@ exports.handler = async (event) => {
 
   const ownerChatId = message.chat?.id;
   const rawText     = hasPhoto ? (message.caption || '') : (message.text || '');
+
+  // ── /delete command ────────────────────────────────────────────────────────
+  if (hasText && rawText.startsWith('/delete')) {
+    const arg = rawText.slice('/delete'.length).trim();
+    if (!arg) {
+      await sendTelegramMessage(ownerChatId, 'Usage: /delete <id or name>');
+      return { statusCode: 200, body: 'OK' };
+    }
+
+    const repo      = process.env.GITHUB_REPO;
+    const token     = process.env.GITHUB_TOKEN;
+    const ghHeaders = {
+      Authorization:          `Bearer ${token}`,
+      Accept:                 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    };
+    const repoBase    = `https://api.github.com/repos/${repo}/contents`;
+    const dealsApiUrl = `${repoBase}/${DEALS_PATH}`;
+
+    let deals, dealsSha;
+    try {
+      ({ deals, sha: dealsSha } = await readDealsFile(dealsApiUrl, ghHeaders));
+    } catch (err) {
+      await sendTelegramMessage(ownerChatId, `Error reading deals: ${err.message}`);
+      return { statusCode: 500, body: 'Internal Server Error' };
+    }
+
+    // Match by id first, then by title (case-insensitive exact match).
+    const argLower = arg.toLowerCase();
+    const deal = deals.find(d => d.id === arg) ||
+                 deals.find(d => d.title.toLowerCase() === argLower);
+
+    if (!deal) {
+      await sendTelegramMessage(ownerChatId, `No deal found for: ${arg}`);
+      return { statusCode: 200, body: 'OK' };
+    }
+
+    // Remove from deals array and commit.
+    try {
+      const updated = deals.filter(d => d.id !== deal.id);
+      const encoded = Buffer.from(JSON.stringify(updated, null, 2) + '\n').toString('base64');
+      await ghPut(dealsApiUrl, ghHeaders, encoded, dealsSha, `delete deal: ${deal.id}`);
+    } catch (err) {
+      await sendTelegramMessage(ownerChatId, `Error updating deals: ${err.message}`);
+      return { statusCode: 500, body: 'Internal Server Error' };
+    }
+
+    // Delete the image if it exists.
+    try {
+      const imageApiUrl = `${repoBase}/images/${deal.id}.jpg`;
+      const { sha: imgSha } = await ghGet(imageApiUrl, ghHeaders);
+      if (imgSha) {
+        await ghDelete(imageApiUrl, ghHeaders, imgSha, `delete image: ${deal.id}`);
+      }
+    } catch (err) {
+      // Non-fatal: log and continue.
+      console.error('Image delete error:', err.message);
+    }
+
+    await sendTelegramMessage(ownerChatId, `Deleted: ${deal.title}`);
+    return { statusCode: 200, body: 'OK' };
+  }
+  // ── end /delete ────────────────────────────────────────────────────────────
 
   // Parse labelled fields.
   const fields = parseFields(rawText);

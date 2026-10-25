@@ -150,4 +150,26 @@ async function loadDeals() {
   deals.forEach(deal => grid.appendChild(buildCard(deal)));
 }
 
-document.addEventListener('DOMContentLoaded', loadDeals);
+async function applyTelegramLinks() {
+  try {
+    const res = await fetch('/.netlify/functions/config');
+    if (!res.ok) return;
+    const { telegramGroupUrl } = await res.json();
+    const links = document.querySelectorAll('[data-telegram-link]');
+    links.forEach(el => {
+      if (telegramGroupUrl) {
+        el.href = telegramGroupUrl;
+      } else {
+        el.hidden = true;
+      }
+    });
+  } catch {
+    // Non-fatal: hide buttons if config is unreachable.
+    document.querySelectorAll('[data-telegram-link]').forEach(el => { el.hidden = true; });
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadDeals();
+  applyTelegramLinks();
+});
