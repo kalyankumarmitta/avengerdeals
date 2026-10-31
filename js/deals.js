@@ -16,13 +16,22 @@ function formatDate(iso) {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+function githubRawBase() {
+  const repo = (window.SITE_CONFIG && window.SITE_CONFIG.githubRepo) || '';
+  return repo ? `https://raw.githubusercontent.com/${repo}/main` : '';
+}
+
 function buildCard(deal) {
   const card = document.createElement('div');
   card.className = 'card';
 
   // deal.image is a repo-relative path like "images/slug.jpg", or empty string.
-  const imgEl = deal.image
-    ? `<img class="card__img" src="/${escapeHtml(deal.image)}" alt="${escapeHtml(deal.title)}" loading="lazy">`
+  const rawBase = githubRawBase();
+  const imgSrc  = deal.image
+    ? (rawBase ? `${rawBase}/${escapeHtml(deal.image)}` : `/${escapeHtml(deal.image)}`)
+    : '';
+  const imgEl = imgSrc
+    ? `<img class="card__img" src="${imgSrc}" alt="${escapeHtml(deal.title)}" loading="lazy" onerror="this.outerHTML='<div class=\\'card__img card__img--placeholder\\' aria-hidden=\\'true\\'>No image</div>'">`
     : `<div class="card__img card__img--placeholder" aria-hidden="true">No image</div>`;
 
   const catLabel = deal.category
@@ -95,13 +104,24 @@ async function loadDeals() {
   let allDeals    = [];
   let fetchFailed = false;
 
+  const rawBase = githubRawBase();
   try {
-    const res = await fetch('/data/deals.json');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    allDeals = await res.json();
-  } catch (err) {
-    fetchFailed = true;
-    console.error('deals.js:', err);
+    if (rawBase) {
+      const res = await fetch(`${rawBase}/data/deals.json`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      allDeals = await res.json();
+    } else {
+      throw new Error('no githubRepo configured');
+    }
+  } catch (remoteErr) {
+    try {
+      const res = await fetch('/data/deals.json');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      allDeals = await res.json();
+    } catch (err) {
+      fetchFailed = true;
+      console.error('deals.js:', err);
+    }
   }
 
   // Always build the category nav (shows only "All" when list is empty)
@@ -150,23 +170,15 @@ async function loadDeals() {
   deals.forEach(deal => grid.appendChild(buildCard(deal)));
 }
 
-async function applyTelegramLinks() {
-  try {
-    const res = await fetch('/.netlify/functions/config');
-    if (!res.ok) return;
-    const { telegramGroupUrl } = await res.json();
-    const links = document.querySelectorAll('[data-telegram-link]');
-    links.forEach(el => {
-      if (telegramGroupUrl) {
-        el.href = telegramGroupUrl;
-      } else {
-        el.hidden = true;
-      }
-    });
-  } catch {
-    // Non-fatal: hide buttons if config is unreachable.
-    document.querySelectorAll('[data-telegram-link]').forEach(el => { el.hidden = true; });
-  }
+function applyTelegramLinks() {
+  const telegramGroupUrl = (window.SITE_CONFIG && window.SITE_CONFIG.telegramGroupUrl) || '';
+  document.querySelectorAll('[data-telegram-link]').forEach(el => {
+    if (telegramGroupUrl) {
+      el.href = telegramGroupUrl;
+    } else {
+      el.hidden = true;
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', () => {

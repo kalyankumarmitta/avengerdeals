@@ -1,3 +1,4 @@
 [build]
   publish = "."
-  functions = "netlify/functions"
+  command = "bash scripts/build-config.sh"
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- . ':(exclude)data' ':(exclude)images' ':(exclude)posts'"
