@@ -11,28 +11,90 @@ function escapeHtml(str) {
     .replace(/'/g, '&#39;');
 }
 
-function formatDate(iso) {
-  const d = new Date(iso + 'T00:00:00');
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-}
+window._imgFallback = function(img) {
+  const ph = document.createElement('div');
+  ph.className = 'card__img card__img--placeholder';
+  ph.setAttribute('aria-hidden', 'true');
+  ph.textContent = 'No image';
+  img.parentNode.replaceChild(ph, img);
+};
 
-function githubRawBase() {
-  const repo = (window.SITE_CONFIG && window.SITE_CONFIG.githubRepo) || '';
-  return repo ? `https://raw.githubusercontent.com/${repo}/main` : '';
+async function fetchSheetDeals() {
+  const cfg       = window.SITE_CONFIG || {};
+  const sheetId   = cfg.sheetId   || '';
+  const sheetName = cfg.sheetName || 'Form Responses 1';
+
+  if (!sheetId || sheetId === 'YOUR_SHEET_ID') return [];
+
+  const url = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheetName)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+
+  const start = text.indexOf('(');
+  const end   = text.lastIndexOf(')');
+  if (start === -1 || end === -1) throw new Error('Unexpected response format');
+  const data = JSON.parse(text.slice(start + 1, end));
+
+  const table = data.table;
+  if (!table || !table.rows || !table.cols) return [];
+
+  const colIndex = {};
+  table.cols.forEach((col, i) => {
+    const label = (col.label || col.id || '').toLowerCase().trim();
+    colIndex[label] = i;
+  });
+
+  const getCellRaw = (row, label) => {
+    const i = colIndex[label.toLowerCase()];
+    if (i === undefined || !row.c || row.c[i] == null) return null;
+    return row.c[i];
+  };
+
+  const getVal = (row, label) => {
+    const cell = getCellRaw(row, label);
+    return cell && cell.v != null ? String(cell.v).trim() : '';
+  };
+
+  const getFmt = (row, label) => {
+    const cell = getCellRaw(row, label);
+    return cell && cell.f != null ? String(cell.f).trim() : '';
+  };
+
+  const deals = [];
+  for (const row of table.rows) {
+    if (!row || !row.c) continue;
+    const status = getVal(row, 'status').toLowerCase();
+    if (status !== 'approved') continue;
+
+    const rawCategory = getVal(row, 'category') || 'general';
+    const category = rawCategory.toLowerCase().trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/^-|-$/g, '') || 'general';
+
+    deals.push({
+      name:         getVal(row, 'name'),
+      price:        getVal(row, 'price'),
+      category,
+      affiliateLink: getVal(row, 'affiliate link'),
+      imageUrl:     getVal(row, 'image url'),
+      timestamp:    getFmt(row, 'timestamp'),
+    });
+  }
+
+  deals.reverse();
+  return deals;
 }
 
 function buildCard(deal) {
   const card = document.createElement('div');
   card.className = 'card';
 
-  // deal.image is a repo-relative path like "images/slug.jpg", or empty string.
-  const rawBase = githubRawBase();
-  const imgSrc  = deal.image
-    ? (rawBase ? `${rawBase}/${escapeHtml(deal.image)}` : `/${escapeHtml(deal.image)}`)
-    : '';
-  const imgEl = imgSrc
-    ? `<img class="card__img" src="${imgSrc}" alt="${escapeHtml(deal.title)}" loading="lazy" onerror="this.outerHTML='<div class=\\'card__img card__img--placeholder\\' aria-hidden=\\'true\\'>No image</div>'">`
-    : `<div class="card__img card__img--placeholder" aria-hidden="true">No image</div>`;
+  const placeholder = `<div class="card__img card__img--placeholder" aria-hidden="true">No image</div>`;
+  const imgEl = deal.imageUrl
+    ? `<img class="card__img" src="${escapeHtml(deal.imageUrl)}" alt="${escapeHtml(deal.name)}" loading="lazy" onerror="window._imgFallback(this)">`
+    : placeholder;
 
   const catLabel = deal.category
     ? deal.category.charAt(0).toUpperCase() + deal.category.slice(1) : '';
@@ -42,16 +104,16 @@ function buildCard(deal) {
   const priceEl = deal.price
     ? `<p class="card__price">Price: ${escapeHtml(deal.price)}</p>` : '';
 
-  const dateEl = deal.date
-    ? `<time class="card__date" datetime="${escapeHtml(deal.date)}">${formatDate(deal.date)}</time>` : '';
+  const dateEl = deal.price && deal.timestamp
+    ? `<time class="card__date">Price as of ${escapeHtml(deal.timestamp)}</time>` : '';
 
-  const grabUrl    = deal.affiliateUrl ? escapeHtml(deal.affiliateUrl) : '#';
-  const urlDisplay = deal.affiliateUrl ? escapeHtml(deal.affiliateUrl) : '';
+  const grabUrl    = deal.affiliateLink ? escapeHtml(deal.affiliateLink) : '#';
+  const urlDisplay = deal.affiliateLink ? escapeHtml(deal.affiliateLink) : '';
 
   card.innerHTML = `
     ${imgEl}
     ${badge}
-    <p class="card__title">${escapeHtml(deal.title)}</p>
+    <p class="card__title">${escapeHtml(deal.name)}</p>
     ${priceEl}
     ${dateEl}
     <a class="btn-grab" href="${grabUrl}" target="_blank" rel="sponsored nofollow noopener">Grab product</a>
@@ -61,9 +123,6 @@ function buildCard(deal) {
   return card;
 }
 
-// Appends category links into .site-nav after the "All" anchor.
-// Only categories that have at least one deal are shown.
-// When deals is empty, only "All" remains.
 function buildCategoryNav(deals) {
   const nav = document.querySelector('.site-nav');
   if (!nav) return;
@@ -83,9 +142,7 @@ function buildCategoryNav(deals) {
 
   if (!deals.length) return;
 
-  const categories = [...new Set(
-    deals.map(d => (d.category || 'general').toLowerCase())
-  )].sort();
+  const categories = [...new Set(deals.map(d => d.category))].sort();
 
   categories.forEach(cat => {
     const a = document.createElement('a');
@@ -104,40 +161,25 @@ async function loadDeals() {
   let allDeals    = [];
   let fetchFailed = false;
 
-  const rawBase = githubRawBase();
   try {
-    if (rawBase) {
-      const res = await fetch(`${rawBase}/data/deals.json`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      allDeals = await res.json();
-    } else {
-      throw new Error('no githubRepo configured');
-    }
-  } catch (remoteErr) {
-    try {
-      const res = await fetch('/data/deals.json');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      allDeals = await res.json();
-    } catch (err) {
-      fetchFailed = true;
-      console.error('deals.js:', err);
-    }
+    allDeals = await fetchSheetDeals();
+  } catch (err) {
+    fetchFailed = true;
+    console.error('deals.js:', err);
   }
 
-  // Always build the category nav (shows only "All" when list is empty)
   buildCategoryNav(allDeals);
 
-  if (!grid) return; // nav-only pages (disclosure, privacy)
+  if (!grid) return;
 
   if (fetchFailed) {
     if (status) {
-      status.textContent = 'Could not load deals right now. Please refresh or try again later.';
+      status.textContent = 'Deals are unavailable right now. Please refresh or try again later.';
       status.hidden = false;
     }
     return;
   }
 
-  // Determine filter: URL param takes priority, then data-category attribute
   const params   = new URLSearchParams(location.search);
   const category = params.get('c') ? params.get('c').toLowerCase()
                                     : (grid.dataset.category || null);
@@ -150,10 +192,8 @@ async function loadDeals() {
 
   let deals = allDeals;
   if (category) {
-    deals = allDeals.filter(d => (d.category || 'general').toLowerCase() === category);
+    deals = allDeals.filter(d => d.category === category);
   }
-
-  deals.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
   if (!deals.length) {
     if (status) {
