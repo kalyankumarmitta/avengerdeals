@@ -19,10 +19,30 @@ window._imgFallback = function(img) {
   img.parentNode.replaceChild(ph, img);
 };
 
+// Returns the string value of a cell by column index, or "" if missing/null.
+function cellValue(row, index) {
+  if (!row || !Array.isArray(row.c)) return '';
+  const cell = row.c[index];
+  if (cell == null || cell.v == null) return '';
+  return String(cell.v).trim();
+}
+
+// Returns the formatted value of a cell by column index, or "" if missing/null.
+function cellFormatted(row, index) {
+  if (!row || !Array.isArray(row.c)) return '';
+  const cell = row.c[index];
+  if (cell == null || cell.f == null) return '';
+  return String(cell.f).trim();
+}
+
 async function fetchSheetDeals() {
-  const cfg       = window.SITE_CONFIG || {};
-  const sheetId   = cfg.sheetId   || '';
-  const sheetName = cfg.sheetName || 'Form Responses 1';
+  if (!window.SITE_CONFIG) {
+    console.error('deals.js: window.SITE_CONFIG is not defined — make sure js/config.js is loaded before js/deals.js');
+    throw new Error('SITE_CONFIG missing');
+  }
+
+  const sheetId   = window.SITE_CONFIG.sheetId   || '';
+  const sheetName = window.SITE_CONFIG.sheetName || 'Form Responses 1';
 
   if (!sheetId || sheetId === 'YOUR_SHEET_ID') return [];
 
@@ -37,50 +57,56 @@ async function fetchSheetDeals() {
   const data = JSON.parse(text.slice(start + 1, end));
 
   const table = data.table;
-  if (!table || !table.rows || !table.cols) return [];
+  if (!table || !Array.isArray(table.rows) || !Array.isArray(table.cols)) return [];
 
+  // Build a label→index map (lowercase). Missing labels resolve to undefined.
   const colIndex = {};
   table.cols.forEach((col, i) => {
-    const label = (col.label || col.id || '').toLowerCase().trim();
-    colIndex[label] = i;
+    const label = ((col && (col.label || col.id)) || '').toLowerCase().trim();
+    if (label) colIndex[label] = i;
   });
 
-  const getCellRaw = (row, label) => {
-    const i = colIndex[label.toLowerCase()];
-    if (i === undefined || !row.c || row.c[i] == null) return null;
-    return row.c[i];
-  };
-
-  const getVal = (row, label) => {
-    const cell = getCellRaw(row, label);
-    return cell && cell.v != null ? String(cell.v).trim() : '';
-  };
-
-  const getFmt = (row, label) => {
-    const cell = getCellRaw(row, label);
-    return cell && cell.f != null ? String(cell.f).trim() : '';
+  const idx = {
+    name:     colIndex['name'],
+    price:    colIndex['price'],
+    category: colIndex['category'],
+    link:     colIndex['affiliate link'],
+    image:    colIndex['image url'],
+    status:   colIndex['status'],
+    ts:       colIndex['timestamp'],
   };
 
   const deals = [];
   for (const row of table.rows) {
-    if (!row || !row.c) continue;
-    const status = getVal(row, 'status').toLowerCase();
-    if (status !== 'approved') continue;
+    try {
+      if (!row || !Array.isArray(row.c)) continue;
 
-    const rawCategory = getVal(row, 'category') || 'general';
-    const category = rawCategory.toLowerCase().trim()
-      .replace(/\s+/g, '-')
-      .replace(/[^a-z0-9-]/g, '')
-      .replace(/^-|-$/g, '') || 'general';
+      const status = (idx.status !== undefined ? cellValue(row, idx.status) : '').toLowerCase();
+      if (status !== 'approved') continue;
 
-    deals.push({
-      name:         getVal(row, 'name'),
-      price:        getVal(row, 'price'),
-      category,
-      affiliateLink: getVal(row, 'affiliate link'),
-      imageUrl:     getVal(row, 'image url'),
-      timestamp:    getFmt(row, 'timestamp'),
-    });
+      const name         = idx.name  !== undefined ? cellValue(row, idx.name)  : '';
+      const affiliateLink = idx.link !== undefined ? cellValue(row, idx.link)  : '';
+
+      // Skip rows that have no usable name or link
+      if (!name && !affiliateLink) continue;
+
+      const rawCategory = (idx.category !== undefined ? cellValue(row, idx.category) : '') || 'general';
+      const category = rawCategory.toLowerCase().trim()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-]/g, '')
+        .replace(/^-|-$/g, '') || 'general';
+
+      deals.push({
+        name,
+        price:        idx.price !== undefined ? cellValue(row, idx.price)     : '',
+        category,
+        affiliateLink,
+        imageUrl:     idx.image !== undefined ? cellValue(row, idx.image)     : '',
+        timestamp:    idx.ts    !== undefined ? cellFormatted(row, idx.ts)    : '',
+      });
+    } catch (rowErr) {
+      console.error('deals.js: skipping malformed row', rowErr);
+    }
   }
 
   deals.reverse();
